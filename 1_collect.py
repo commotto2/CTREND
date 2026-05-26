@@ -63,7 +63,11 @@ def init_db(conn):
 # ── API 호출 ─────────────────────────────────────────────
 def api_get(endpoint, params=None):
     url = BASE_URL + endpoint
-    headers = {"x-cg-demo-api-key": API_KEY} if API_KEY else {}
+    headers = {}
+    if params is None:
+        params = {}
+    if API_KEY:
+        params["x_cg_demo_api_key"] = API_KEY
     backoff_idx = 0
 
     for attempt in range(4):
