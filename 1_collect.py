@@ -1,35 +1,31 @@
 """
-1_collect.py — 데이터 수집
-============================
-CoinGecko Demo API로 상위 300개 코인의 일별 OHLCV + 시가총액 수집.
-수집 결과를 data/prices.db (SQLite)에 저장.
+1_collect.py — 데이터 수집 (Binance API)
+==========================================
+Binance 공개 API로 USDT 페어 코인의 일별 OHLCV 수집.
+- API 키 불필요
+- 2017년부터 현재까지 데이터 제공
+- OHLCV 전체 제공 (Open/High/Low/Close/Volume)
+- 시가총액 없음 → 거래량(volume)으로 대체
 
-- 매주 금요일 GitHub Actions가 자동 실행
-- 중단/재실행 시 이어서 수집 (collection_status 테이블)
-- 429 발생 시 자동 backoff
+수집 결과: data/prices.db (SQLite)
 """
 
-import os, sqlite3, time, requests
+import sqlite3, time, requests
 import pandas as pd
 from datetime import datetime, timedelta
 from pathlib import Path
 
 # ── 설정 ────────────────────────────────────────────────
-API_KEY      = os.environ.get("COINGECKO_API_KEY", "")
-BASE_URL     = "https://api.coingecko.com/api/v3"
 DB_PATH      = Path("data/prices.db")
-TARGET_COINS = 300
-SLEEP_SEC    = 2.5          # 호출 간격 (Demo: 분당 100콜 → 여유있게 2.5초)
-BACKOFF_429  = [60, 120]    # 429 시 대기(초)
+BASE_URL     = "https://api.binance.com/api/v3"
+TARGET_COINS = 300        # 거래량 상위 N개
+FETCH_FROM   = "2022-01-01"   # 수집 시작일 (논문 종료 직전)
+SLEEP_SEC    = 0.3            # 호출 간격 (Binance는 rate limit 넉넉함)
 
-# 수집 기간: 논문 종료(2022-06) 직전 ~ 현재
-FETCH_FROM   = (datetime.now() - timedelta(days=364)).strftime("%Y-%m-%d")
-FETCH_FROM_TS = int(datetime.strptime(FETCH_FROM, "%Y-%m-%d").timestamp())
-FETCH_TO_TS   = int(datetime.now().timestamp())
+FETCH_FROM_MS = int(datetime.strptime(FETCH_FROM, "%Y-%m-%d").timestamp() * 1000)
 
 def log(msg):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
-print(f"[DEBUG] API_KEY 앞 10자리: '{API_KEY[:10] if API_KEY else 'EMPTY'}'", flush=True)
 
 # ── DB 초기화 ────────────────────────────────────────────
 def init_db(conn):
@@ -44,6 +40,9 @@ def init_db(conn):
     CREATE TABLE IF NOT EXISTS daily_prices (
         coin_id   TEXT,
         date      TEXT,
+        open      REAL,
+        high      REAL,
+        low       REAL,
         close     REAL,
         volume    REAL,
         mcap      REAL,
@@ -51,7 +50,7 @@ def init_db(conn):
     );
     CREATE TABLE IF NOT EXISTS collection_status (
         coin_id   TEXT PRIMARY KEY,
-        status    TEXT,   -- pending / done / failed
+        status    TEXT,
         attempt   INTEGER DEFAULT 0,
         updated   TEXT
     );
@@ -64,36 +63,24 @@ def init_db(conn):
 # ── API 호출 ─────────────────────────────────────────────
 def api_get(endpoint, params=None):
     url = BASE_URL + endpoint
-    headers = {}
-    if params is None:
-        params = {}
-    if API_KEY:
-        params["x_cg_demo_api_key"] = API_KEY
-    backoff_idx = 0
-
     for attempt in range(4):
         try:
             time.sleep(SLEEP_SEC)
-            r = requests.get(url, params=params, headers=headers, timeout=30)
-
+            r = requests.get(url, params=params, timeout=30)
             if r.status_code == 200:
                 return r.json()
             elif r.status_code == 429:
-                wait = BACKOFF_429[min(backoff_idx, len(BACKOFF_429)-1)]
-                log(f"  429 → {wait}초 대기")
-                time.sleep(wait)
-                backoff_idx += 1
-            elif r.status_code in (400, 404):
-                return None
+                log(f"  429 → 60초 대기")
+                time.sleep(60)
             else:
                 log(f"  HTTP {r.status_code} (시도 {attempt+1})")
-                time.sleep(15)
+                time.sleep(10)
         except requests.RequestException as e:
             log(f"  네트워크 오류: {e}")
             time.sleep(15)
     return None
 
-# ── 코인 목록 수집 ────────────────────────────────────────
+# ── 거래량 상위 USDT 페어 목록 ────────────────────────────
 def fetch_coin_list(conn):
     cur = conn.cursor()
     n = cur.execute("SELECT COUNT(*) FROM coin_info").fetchone()[0]
@@ -101,58 +88,77 @@ def fetch_coin_list(conn):
         log(f"코인 목록 이미 있음 ({n}개) → 스킵")
         return
 
-    log(f"코인 목록 수집 중 (상위 {TARGET_COINS}개)...")
-    coins, page = [], 1
-    while len(coins) < TARGET_COINS:
-        batch = api_get("/coins/markets", {
-            "vs_currency": "usd", "order": "market_cap_desc",
-            "per_page": 250, "page": page, "sparkline": "false"
-        })
-        if not batch:
-            break
-        coins.extend(batch)
-        log(f"  {len(coins)}개 수집")
-        page += 1
+    log("거래량 상위 코인 목록 수집 중...")
 
-    coins = coins[:TARGET_COINS]
+    # 24시간 티커 (거래량 기준 정렬)
+    data = api_get("/ticker/24hr")
+    if not data:
+        raise RuntimeError("코인 목록 수집 실패")
+
+    # USDT 페어만 필터
+    usdt = [d for d in data if d["symbol"].endswith("USDT")
+            and float(d["quoteVolume"]) > 0]
+
+    # 거래량 내림차순 정렬
+    usdt.sort(key=lambda x: float(x["quoteVolume"]), reverse=True)
+    top = usdt[:TARGET_COINS]
+
     now = datetime.now().isoformat()
     cur.executemany(
         "INSERT OR IGNORE INTO coin_info VALUES(?,?,?,?,?)",
-        [(c["id"], c["symbol"], c["name"], i+1, now) for i, c in enumerate(coins)]
+        [(d["symbol"], d["symbol"].replace("USDT",""), d["symbol"].replace("USDT",""), i+1, now)
+         for i, d in enumerate(top)]
     )
     cur.executemany(
         "INSERT OR IGNORE INTO collection_status(coin_id,status) VALUES(?,'pending')",
-        [(c["id"],) for c in coins]
+        [(d["symbol"],) for d in top]
     )
     conn.commit()
-    log(f"코인 목록 저장: {len(coins)}개")
+    log(f"코인 목록 저장: {len(top)}개")
 
-# ── 코인 1개 가격 수집 ────────────────────────────────────
-def fetch_prices(conn, coin_id):
-    data = api_get(f"/coins/{coin_id}/market_chart/range", {
-        "vs_currency": "usd",
-        "from": FETCH_FROM_TS,
-        "to":   FETCH_TO_TS
-    })
-    if not data or "prices" not in data:
-        return -1
+# ── 코인 1개 OHLCV 수집 ──────────────────────────────────
+def fetch_ohlcv(conn, symbol):
+    """
+    Binance klines API: 한 번에 최대 1000개 → 여러 번 나눠서 수집
+    """
+    all_rows = []
+    start_ms = FETCH_FROM_MS
 
-    prices  = {datetime.utcfromtimestamp(ts/1000).strftime("%Y-%m-%d"): v
-               for ts, v in data.get("prices", [])}
-    volumes = {datetime.utcfromtimestamp(ts/1000).strftime("%Y-%m-%d"): v
-               for ts, v in data.get("total_volumes", [])}
-    mcaps   = {datetime.utcfromtimestamp(ts/1000).strftime("%Y-%m-%d"): v
-               for ts, v in data.get("market_caps", [])}
+    while True:
+        data = api_get("/klines", {
+            "symbol":    symbol,
+            "interval":  "1d",
+            "startTime": start_ms,
+            "limit":     1000
+        })
+        if not data:
+            break
+        if len(data) == 0:
+            break
 
-    rows = [(coin_id, d, prices[d], volumes.get(d), mcaps.get(d))
-            for d in sorted(prices) if prices[d] and prices[d] > 0]
-    if not rows:
+        for k in data:
+            date   = datetime.utcfromtimestamp(k[0]/1000).strftime("%Y-%m-%d")
+            o, h, l, c, v = float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[5])
+            # mcap 없음 → None (거래량으로 대체)
+            all_rows.append((symbol, date, o, h, l, c, v, None))
+
+        # 마지막 캔들 다음부터 다시 요청
+        last_ts = data[-1][0]
+        start_ms = last_ts + 86400000  # +1일(ms)
+
+        # 오늘까지 다 받았으면 종료
+        if len(data) < 1000:
+            break
+
+    if not all_rows:
         return 0
 
     conn.executemany(
-        "INSERT OR REPLACE INTO daily_prices VALUES(?,?,?,?,?)", rows)
+        "INSERT OR REPLACE INTO daily_prices VALUES(?,?,?,?,?,?,?,?)",
+        all_rows
+    )
     conn.commit()
-    return len(rows)
+    return len(all_rows)
 
 # ── 수집 현황 출력 ────────────────────────────────────────
 def print_status(conn):
@@ -171,11 +177,6 @@ def print_status(conn):
 
 # ── 메인 ─────────────────────────────────────────────────
 def main():
-    if not API_KEY:
-        log("⚠️  COINGECKO_API_KEY 환경변수가 없습니다")
-        log("   GitHub Secret에 COINGECKO_API_KEY를 설정하세요")
-        raise SystemExit(1)
-
     DB_PATH.parent.mkdir(exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.execute("PRAGMA journal_mode=WAL")
@@ -195,15 +196,19 @@ def main():
 
     for (coin_id,) in targets:
         now = datetime.now().isoformat()
-        cur.execute("UPDATE collection_status SET attempt=attempt+1, updated=? WHERE coin_id=?",
-                    (now, coin_id))
+        cur.execute(
+            "UPDATE collection_status SET attempt=attempt+1, updated=? WHERE coin_id=?",
+            (now, coin_id)
+        )
         conn.commit()
 
-        rows = fetch_prices(conn, coin_id)
+        rows = fetch_ohlcv(conn, coin_id)
 
         if rows >= 0:
-            cur.execute("UPDATE collection_status SET status='done', updated=? WHERE coin_id=?",
-                        (now, coin_id))
+            cur.execute(
+                "UPDATE collection_status SET status='done', updated=? WHERE coin_id=?",
+                (now, coin_id)
+            )
             ok += 1
             log(f"  ✓ {coin_id}: {rows}행")
         else:
@@ -211,8 +216,10 @@ def main():
                 "SELECT attempt FROM collection_status WHERE coin_id=?", (coin_id,)
             ).fetchone()[0]
             if attempt >= 3:
-                cur.execute("UPDATE collection_status SET status='failed', updated=? WHERE coin_id=?",
-                            (now, coin_id))
+                cur.execute(
+                    "UPDATE collection_status SET status='failed', updated=? WHERE coin_id=?",
+                    (now, coin_id)
+                )
                 log(f"  ✗ {coin_id}: failed")
                 fail += 1
             else:
