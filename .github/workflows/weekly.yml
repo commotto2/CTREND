@@ -2,11 +2,9 @@ name: CTREND Weekly Pipeline
 
 on:
   schedule:
-    # 매주 토요일 오전 9시 (KST) = UTC 금요일 00:00
-    # 금요일 장 마감 후 데이터 수집 → 토요일 신호 생성
+    # 매주 토요일 오전 9시 KST (UTC 금요일 00:00)
     - cron: '0 0 * * 6'
   workflow_dispatch:
-    # 수동 실행 버튼 (언제든 즉시 실행 가능)
 
 jobs:
   pipeline:
@@ -23,12 +21,9 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: |
-          pip install requests pandas numpy scikit-learn openpyxl
+        run: pip install requests pandas numpy scikit-learn openpyxl
 
-      - name: Step 1 — 데이터 수집
-        env:
-          COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }}
+      - name: Step 1 — 데이터 수집 (Binance)
         run: python 1_collect.py
 
       - name: Step 2 — 지표 계산
@@ -41,7 +36,7 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/prices.db signals/
+          git add data/prices.db signals/ || true
           git diff --staged --quiet || \
             git commit -m "chore: weekly update $(date +'%Y-%m-%d')"
           git push
