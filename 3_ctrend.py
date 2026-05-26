@@ -172,10 +172,21 @@ def compare_with_paper(our_ret_df):
         log("ctrend_paper.csv 없음 → 비교 스킵")
         return
 
-    paper = pd.read_csv(PAPER_CSV)
-    # 컬럼명 확인 후 처리
+    paper = pd.read_csv(PAPER_CSV, index_col=None)
+    paper.columns = paper.columns.str.strip()
+
+    # 첫 번째 컬럼이 날짜인 경우 대응
     if "date" not in paper.columns:
-        paper.columns = paper.columns.str.strip()
+        first_col = paper.columns[0]
+        log(f"  컬럼명 확인: {paper.columns.tolist()}")
+        # 첫 번째 컬럼이 날짜처럼 생겼으면 rename
+        try:
+            pd.to_datetime(paper[first_col].iloc[0])
+            paper = paper.rename(columns={first_col: "date"})
+        except Exception:
+            log("date 컬럼 없음 → 비교 스킵")
+            return
+
     paper["date"] = pd.to_datetime(paper["date"])
 
     ours = our_ret_df.copy()
@@ -184,7 +195,7 @@ def compare_with_paper(our_ret_df):
     merged = pd.merge(paper, ours[["date","ctrend_ret"]], on="date", how="inner")
 
     if len(merged) < 4:
-        log(f"겹치는 구간 {len(merged)}주 — 비교 불가 (out-of-sample 기간이라 정상)")
+        log(f"겹치는 구간 {len(merged)}주 — out-of-sample 기간이라 정상")
         return
 
     corr = merged["CTREND"].corr(merged["ctrend_ret"])
