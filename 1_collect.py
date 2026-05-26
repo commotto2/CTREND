@@ -29,6 +29,7 @@ FETCH_TO_TS   = int(datetime.now().timestamp())
 
 def log(msg):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
+print(f"[DEBUG] API_KEY 앞 10자리: '{API_KEY[:10] if API_KEY else 'EMPTY'}'", flush=True)
 
 # ── DB 초기화 ────────────────────────────────────────────
 def init_db(conn):
