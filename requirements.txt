@@ -1,4 +1,5 @@
 requests
 pandas
 numpy
-tqdm
+scikit-learn
+openpyxl
