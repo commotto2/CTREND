@@ -172,7 +172,7 @@ def compare_with_paper(our_ret_df):
         log("ctrend_paper.csv 없음 → 비교 스킵")
         return
 
-    paper = pd.read_csv(PAPER_CSV, index_col=None)
+    paper = pd.read_csv(PAPER_CSV, index_col=None, sep=None, engine="python")
     paper.columns = paper.columns.str.strip()
 
     # 첫 번째 컬럼이 날짜인 경우 대응
