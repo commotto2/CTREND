@@ -19,7 +19,7 @@ from pathlib import Path
 DB_PATH      = Path("data/prices.db")
 BASE_URL     = "https://data-api.binance.vision/api/v3"
 TARGET_COINS = 300        # 거래량 상위 N개
-FETCH_FROM   = "2022-01-01"   # 수집 시작일 (논문 종료 직전)
+FETCH_FROM   = "2020-01-01"   # 수집 시작일 (논문 종료 직전)
 SLEEP_SEC    = 0.3            # 호출 간격 (Binance는 rate limit 넉넉함)
 
 FETCH_FROM_MS = int(datetime.strptime(FETCH_FROM, "%Y-%m-%d").timestamp() * 1000)
