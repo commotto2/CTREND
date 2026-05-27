@@ -9,6 +9,8 @@ on:
 jobs:
   pipeline:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     timeout-minutes: 60
 
     steps:
