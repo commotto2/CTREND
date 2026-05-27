@@ -25,6 +25,9 @@ jobs:
       - name: Install dependencies
         run: pip install requests pandas numpy scikit-learn openpyxl
 
+      - name: Reset DB
+        run: rm -f data/prices.db
+
       - name: Step 1 — 데이터 수집 (Binance)
         run: python 1_collect.py
 
