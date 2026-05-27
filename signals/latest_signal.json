@@ -1,0 +1,17 @@
+{
+  "date": "2026-05-29",
+  "week": 202622,
+  "long_coins": [
+    "WLDUSDT",
+    "NEARUSDT",
+    "ALTUSDT",
+    "FETUSDT"
+  ],
+  "short_coins": [
+    "FILUSDT",
+    "DOGEUSDT",
+    "PEPEUSDT",
+    "LUNCUSDT"
+  ],
+  "n_total": 24
+}
