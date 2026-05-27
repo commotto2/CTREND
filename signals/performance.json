@@ -1,10 +1,10 @@
 {
-  "weeks": 177,
-  "mean_weekly": 0.0031,
-  "std_weekly": 0.0563,
-  "sharpe_annual": 0.401,
-  "win_rate": 0.311,
-  "cumulative_ret": 0.2984,
-  "last_updated": "2026-05-27T01:31:01.401414",
+  "weeks": 282,
+  "mean_weekly": 0.064,
+  "std_weekly": 0.7823,
+  "sharpe_annual": 0.59,
+  "win_rate": 0.518,
+  "cumulative_ret": 197.8727,
+  "last_updated": "2026-05-27T03:14:40.722576",
   "paper_mean_weekly": 0.0387
 }
