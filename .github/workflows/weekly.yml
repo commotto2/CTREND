@@ -9,9 +9,9 @@ on:
 jobs:
   pipeline:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: write
-    timeout-minutes: 60
 
     steps:
       - name: Checkout repository
@@ -24,7 +24,7 @@ jobs:
 
       - name: Install dependencies
         run: pip install requests pandas numpy scikit-learn openpyxl
-      
+
       - name: Step 1 — 데이터 수집 (Binance)
         run: python 1_collect.py
 
@@ -33,6 +33,9 @@ jobs:
 
       - name: Step 3 — CTREND 신호 생성
         run: python 3_ctrend.py
+
+      - name: Step 4 — 페이퍼 트레이딩 추적
+        run: python 4_paper_trading.py
 
       - name: Commit results
         run: |
