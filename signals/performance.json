@@ -1,10 +1,12 @@
 {
   "weeks": 282,
-  "mean_weekly": 0.0057,
-  "std_weekly": 0.2418,
-  "sharpe_annual": 0.171,
-  "win_rate": 0.457,
-  "cumulative_ret": -16.4727,
-  "last_updated": "2026-05-28T00:48:44.260956",
+  "mean_weekly": 0.0103,
+  "std_weekly": 0.1093,
+  "sharpe_annual": 0.679,
+  "win_rate": 0.468,
+  "cumulative_ret": 3.2696,
+  "avg_coins_pw": 129.1,
+  "avg_indicators": 27.4,
+  "last_updated": "2026-05-28T02:28:13.730927",
   "paper_mean_weekly": 0.0387
 }

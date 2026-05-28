@@ -9,5 +9,7 @@
     "XRPUSDT",
     "ZECUSDT"
   ],
-  "n_total": 14
+  "n_total": 14,
+  "n_long": 2,
+  "n_short": 2
 }
