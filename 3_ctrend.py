@@ -246,11 +246,11 @@ def main():
     if panel.empty:
         log("데이터 없음")
         return
-
-    # 시가총액 필터 ($1M 이상)
-    panel = panel[panel["mcap"] > 1_000_000]
-    log(f"필터 후: {panel['coin_id'].nunique()}개 코인")
-
+    
+    mcap_threshold = panel["mcap"].quantile(0.10)
+    panel = panel[panel["mcap"] > mcap_threshold]
+    log(f"시가총액 필터 후: {panel['coin_id'].nunique()}개 코인 (하위 10% 제거)")
+    
     log("Walk-forward Elastic Net 실행 중...")
     pred_df, panel_with_next = walkforward_enet(panel, min_train_weeks=52)
 
