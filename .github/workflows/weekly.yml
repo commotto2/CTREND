@@ -23,10 +23,7 @@ jobs:
 
       - name: Install dependencies
         run: pip install requests pandas numpy scikit-learn openpyxl
-
-      - name: Reset DB
-        run: rm -f data/prices.db
-
+    
       - name: Step 1 — 데이터 수집 (Binance + CoinGecko 시가총액)
         env:
           COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }}
