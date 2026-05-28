@@ -2,22 +2,10 @@
   "date": "2026-05-29",
   "week": 202622,
   "long_coins": [
-    "PHAUSDT",
-    "WLDUSDT",
-    "RENDERUSDT",
-    "NEARUSDT",
-    "FETUSDT",
-    "ALTUSDT",
-    "TRXUSDT"
+    "NEARUSDT"
   ],
   "short_coins": [
-    "XRPUSDT",
-    "TONUSDT",
-    "ETHUSDT",
-    "0GUSDT",
-    "PAXGUSDT",
-    "DOGEUSDT",
-    "PEPEUSDT"
+    "XRPUSDT"
   ],
-  "n_total": 38
+  "n_total": 9
 }
