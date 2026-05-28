@@ -1,9 +1,10 @@
 """
 3_ctrend.py — CTREND 신호 생성 및 검증
 =========================================
-[핵심 수정]
-  t주차 지표 → t+1주차 수익률 예측 (올바른 구조)
-  이전 버전: t주차 지표 → t주차 수익률 (look-ahead bias)
+[v3 수정]
+  - NaN 30% 이하 컬럼만 사용 (참여 코인 수 증가)
+  - 사용 가능한 지표가 주차마다 동적으로 결정됨
+  - 최소 10개 지표 없으면 해당 주차 스킵
 """
 
 import sqlite3
@@ -13,7 +14,7 @@ from pathlib import Path
 from datetime import datetime
 import json
 import warnings
-warnings.filterwarnings("ignore")   # ConvergenceWarning 숨김
+warnings.filterwarnings("ignore")
 
 DB_PATH     = Path("data/prices.db")
 SIGNALS_DIR = Path("signals")
@@ -35,41 +36,52 @@ def log(msg):
 # ── Walk-forward Elastic Net ──────────────────────────────
 def walkforward_enet(panel, min_train_weeks=52):
     """
-    올바른 시점 정렬:
-      X = t주차 지표
-      y = t+1주차 수익률 (ret_next)
+    매 주차마다:
+      - NaN 비율 30% 이하인 지표만 사용 (동적 선택)
+      - X(t주 지표) → y(t+1주 수익률)
+      - 최소 10개 지표 없으면 스킵
     """
     from sklearn.linear_model import ElasticNetCV
     from sklearn.preprocessing import StandardScaler
 
-    # t+1주차 수익률 생성 (코인별 shift)
     panel = panel.copy()
     panel["ret_next"] = panel.groupby("coin_id")["ret"].shift(-1)
 
     weeks   = sorted(panel["week"].unique())
     results = []
+    skipped = 0
 
     for i, w in enumerate(weeks):
         if i < min_train_weeks:
             continue
 
-        # 훈련: t < w 인 주차에서 X(t), y=ret_next(t) = ret(t+1)
-        train = panel[panel["week"] < w].dropna(subset=INDICATOR_COLS + ["ret_next"])
-        # 테스트: t = w 인 주차의 지표로 w+1주차 수익률 예측
-        test  = panel[panel["week"] == w].dropna(subset=INDICATOR_COLS)
+        train_all = panel[panel["week"] < w].copy()
+        test_all  = panel[panel["week"] == w].copy()
 
-        if len(train) < 100 or len(test) < 5:
+        # NaN 30% 이하인 지표만 선택
+        use_cols = [c for c in INDICATOR_COLS
+                    if train_all[c].isna().mean() < 0.3]
+
+        if len(use_cols) < 10:
+            skipped += 1
             continue
 
-        X_train = train[INDICATOR_COLS].values
+        train = train_all.dropna(subset=use_cols + ["ret_next"])
+        test  = test_all.dropna(subset=use_cols)
+
+        if len(train) < 50 or len(test) < 5:
+            skipped += 1
+            continue
+
+        X_train = train[use_cols].values
         y_train = train["ret_next"].values
-        X_test  = test[INDICATOR_COLS].values
+        X_test  = test[use_cols].values
 
         scaler  = StandardScaler()
         X_train = scaler.fit_transform(X_train)
         X_test  = scaler.transform(X_test)
 
-        # Winsorize y
+        # Winsorize y (상하 0.5%)
         lo, hi  = np.percentile(y_train, [0.5, 99.5])
         y_train = np.clip(y_train, lo, hi)
 
@@ -82,10 +94,13 @@ def walkforward_enet(panel, min_train_weeks=52):
             continue
 
         df_pred = test[["coin_id","week","date","mcap"]].copy()
-        # 실제 검증에 쓸 수익률은 다음 주(w+1)의 ret
-        # 현재는 예측값만 저장, 실제 수익률은 나중에 join
-        df_pred["pred"] = preds
+        df_pred["pred"]     = preds
+        df_pred["n_cols"]   = len(use_cols)
+        df_pred["n_train"]  = len(train)
         results.append(df_pred)
+
+    if skipped > 0:
+        log(f"  스킵된 주차: {skipped}개 (지표/데이터 부족)")
 
     if not results:
         return pd.DataFrame(), panel
@@ -93,14 +108,7 @@ def walkforward_enet(panel, min_train_weeks=52):
 
 # ── 포트폴리오 수익률 계산 ────────────────────────────────
 def calc_portfolio_returns(pred_df, panel, quantile=0.2):
-    """
-    예측 기준으로 포트폴리오 구성,
-    실제 수익률은 다음 주 ret으로 계산
-    """
     # 다음 주 실제 수익률 매핑
-    week_ret = panel[["coin_id","week","ret"]].copy()
-    week_ret["week_prev"] = panel.groupby("coin_id")["week"].shift(1)
-    # pred의 week(t) → 다음 주 ret(t+1) 연결
     next_ret = {}
     for coin_id, grp in panel.groupby("coin_id"):
         grp = grp.sort_values("week")
@@ -143,6 +151,7 @@ def calc_portfolio_returns(pred_df, panel, quantile=0.2):
             "n_coins":    n,
             "n_long":     len(long_leg),
             "n_short":    len(short_leg),
+            "n_cols":     int(grp["n_cols"].iloc[0]),
         })
 
     return pd.DataFrame(results)
@@ -157,13 +166,20 @@ def summarize(ret_df):
     sharpe   = mean_w / std_w * np.sqrt(52) if std_w > 0 else 0
     win_rate = (r > 0).mean()
     cumret   = (1 + r).prod() - 1
+
+    # 포트폴리오 참여 코인 수 평균
+    avg_n = ret_df["n_coins"].mean() if "n_coins" in ret_df.columns else 0
+    avg_cols = ret_df["n_cols"].mean() if "n_cols" in ret_df.columns else 0
+
     return {
-        "weeks":          len(r),
-        "mean_weekly":    round(mean_w,  4),
-        "std_weekly":     round(std_w,   4),
-        "sharpe_annual":  round(sharpe,  3),
-        "win_rate":       round(win_rate,3),
-        "cumulative_ret": round(cumret,  4),
+        "weeks":           len(r),
+        "mean_weekly":     round(mean_w,   4),
+        "std_weekly":      round(std_w,    4),
+        "sharpe_annual":   round(sharpe,   3),
+        "win_rate":        round(win_rate, 3),
+        "cumulative_ret":  round(cumret,   4),
+        "avg_coins_pw":    round(avg_n,    1),
+        "avg_indicators":  round(avg_cols, 1),
     }
 
 # ── 저자 결과와 비교 ──────────────────────────────────────
@@ -174,12 +190,8 @@ def compare_with_paper(our_ret_df):
 
     paper = pd.read_csv(PAPER_CSV, index_col=None, sep=None, engine="python")
     paper.columns = paper.columns.str.strip()
-
-    # 첫 번째 컬럼이 날짜인 경우 대응
     if "date" not in paper.columns:
         first_col = paper.columns[0]
-        log(f"  컬럼명 확인: {paper.columns.tolist()}")
-        # 첫 번째 컬럼이 날짜처럼 생겼으면 rename
         try:
             pd.to_datetime(paper[first_col].iloc[0])
             paper = paper.rename(columns={first_col: "date"})
@@ -188,12 +200,10 @@ def compare_with_paper(our_ret_df):
             return
 
     paper["date"] = pd.to_datetime(paper["date"])
-
     ours = our_ret_df.copy()
     ours["date"] = pd.to_datetime(ours["date"])
 
     merged = pd.merge(paper, ours[["date","ctrend_ret"]], on="date", how="inner")
-
     if len(merged) < 4:
         log(f"겹치는 구간 {len(merged)}주 — out-of-sample 기간이라 정상")
         return
@@ -208,8 +218,8 @@ def save_latest_signal(pred_df):
     latest = pred_df[pred_df["week"] == latest_week].copy()
     latest = latest.sort_values("pred", ascending=False)
 
-    n    = len(latest)
-    cut  = max(1, int(n * 0.2))
+    n   = len(latest)
+    cut = max(1, int(n * 0.2))
     latest["signal"] = "neutral"
     latest.iloc[:cut,  latest.columns.get_loc("signal")] = "long"
     latest.iloc[-cut:, latest.columns.get_loc("signal")] = "short"
@@ -222,12 +232,16 @@ def save_latest_signal(pred_df):
     short_coins = latest[latest["signal"]=="short"]["coin_id"].tolist()
     with open(SIGNALS_DIR / "latest_signal.json","w") as f:
         json.dump({
-            "date": date_str, "week": int(latest_week),
-            "long_coins": long_coins, "short_coins": short_coins,
-            "n_total": n,
+            "date":        date_str,
+            "week":        int(latest_week),
+            "long_coins":  long_coins,
+            "short_coins": short_coins,
+            "n_total":     n,
+            "n_long":      cut,
+            "n_short":     cut,
         }, f, indent=2, ensure_ascii=False)
 
-    log(f"신호 저장 완료: {date_str} | 롱 {cut}개 / 숏 {cut}개")
+    log(f"신호 저장 완료: {date_str} | 롱 {cut}개 / 숏 {cut}개 (전체 {n}개 중)")
     log(f"롱 상위 5: {long_coins[:5]}")
 
 # ── 메인 ─────────────────────────────────────────────────
@@ -246,17 +260,23 @@ def main():
     if panel.empty:
         log("데이터 없음")
         return
-    
+
+    # 시가총액 하위 10% 제거
     mcap_threshold = panel["mcap"].quantile(0.10)
     panel = panel[panel["mcap"] > mcap_threshold]
     log(f"시가총액 필터 후: {panel['coin_id'].nunique()}개 코인 (하위 10% 제거)")
-    
+
     log("Walk-forward Elastic Net 실행 중...")
     pred_df, panel_with_next = walkforward_enet(panel, min_train_weeks=52)
 
     if pred_df.empty:
-        log(f"예측 결과 없음 — 현재 {panel['week'].nunique()}주 보유 (52주 이상 필요)")
+        log(f"예측 결과 없음 — 현재 {panel['week'].nunique()}주 보유")
         return
+
+    # 포트폴리오 참여 코인 수 분포 확인
+    n_dist = pred_df.groupby("week").size()
+    log(f"주차별 참여 코인 수: 평균={n_dist.mean():.1f}, "
+        f"최소={n_dist.min()}, 최대={n_dist.max()}")
 
     ret_df = calc_portfolio_returns(pred_df, panel_with_next)
     log(f"포트폴리오 계산 완료: {len(ret_df)}주")
@@ -264,16 +284,12 @@ def main():
     summary = summarize(ret_df)
     log("\n── 성과 요약 ──────────────────────────")
     for k, v in summary.items():
-        log(f"  {k:20s}: {v}")
+        log(f"  {k:22s}: {v}")
     log("──────────────────────────────────────")
 
     if "mean_weekly" in summary:
         log(f"\n  논문 평균 수익률:  +3.87%/주")
         log(f"  우리 평균 수익률:  {summary['mean_weekly']*100:+.2f}%/주")
-        if abs(summary['mean_weekly']) < 0.10:
-            log("  → 논문과 유사한 수준 ✓")
-        elif summary['mean_weekly'] > 0.10:
-            log("  → 여전히 높음: 데이터/구현 추가 검토 필요")
 
     compare_with_paper(ret_df)
     save_latest_signal(pred_df)
