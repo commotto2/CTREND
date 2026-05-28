@@ -2,10 +2,12 @@
   "date": "2026-05-29",
   "week": 202622,
   "long_coins": [
-    "NEARUSDT"
+    "BNBUSDT",
+    "BTCUSDT"
   ],
   "short_coins": [
-    "XRPUSDT"
+    "XRPUSDT",
+    "ZECUSDT"
   ],
-  "n_total": 9
+  "n_total": 14
 }
