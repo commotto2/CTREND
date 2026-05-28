@@ -2,7 +2,6 @@ name: CTREND Weekly Pipeline
 
 on:
   schedule:
-    # 매주 토요일 오전 9시 KST (UTC 금요일 00:00)
     - cron: '0 0 * * 6'
   workflow_dispatch:
 
@@ -25,7 +24,9 @@ jobs:
       - name: Install dependencies
         run: pip install requests pandas numpy scikit-learn openpyxl
 
-      - name: Step 1 — 데이터 수집 (Binance)
+      - name: Step 1 — 데이터 수집 (Binance + CoinGecko 시가총액)
+        env:
+          COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }}
         run: python 1_collect.py
 
       - name: Step 2 — 지표 계산
